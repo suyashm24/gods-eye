@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Ultra-Fast Stock Scan</title>
+    <script src="https://unpkg.com/html5-qrcode"></script>
+    <style>
+        :root {
+            --in-emerald: #059669;
+            --out-indigo: #4f46e5;
+            --dark-ui: #0f172a;
+        }
+
+        body, html { 
+            margin: 0; padding: 0; height: 100%; width: 100%;
+            font-family: -apple-system, system-ui, sans-serif;
+            background: #000; overflow: hidden;
+        }
+
+        .page { display: none; height: 100vh; width: 100%; flex-direction: column; }
+        .active { display: flex; }
+
+        /* Login - Minimalist */
+        #page-login { justify-content: center; align-items: center; background: var(--dark-ui); }
+        .login-card { background: white; padding: 40px; border-radius: 30px; width: 85%; max-width: 380px; text-align: center; }
+        input { width: 100%; padding: 16px; margin: 10px 0; border: 2px solid #e2e8f0; border-radius: 15px; font-size: 16px; box-sizing: border-box; }
+        .btn-go { width: 100%; padding: 18px; background: var(--dark-ui); color: white; border: none; border-radius: 15px; font-weight: bold; }
+
+        /* Dashboard - 50/50 Split */
+        .btn-split { 
+            flex: 1; border: none; color: white; cursor: pointer;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+        }
+        .btn-in { background: var(--in-emerald); }
+        .btn-out { background: var(--out-indigo); }
+        .btn-split h1 { font-size: 3rem; margin: 0; font-weight: 900; }
+        .btn-split p { margin: 5px 0 0; opacity: 0.8; font-weight: 500; letter-spacing: 1px; }
+
+        /* Scanner - Full Performance */
+        #page-scanner { background: #000; }
+        #reader { width: 100% !important; height: 100% !important; }
+        
+        .overlay {
+            position: absolute; bottom: 0; width: 100%;
+            background: rgba(15, 23, 42, 0.95);
+            padding: 30px 20px calc(30px + env(safe-area-inset-bottom));
+            box-sizing: border-box; border-top: 1px solid rgba(255,255,255,0.1);
+            text-align: center; color: white;
+        }
+        .status-pill { display: inline-block; padding: 6px 15px; border-radius: 20px; font-size: 12px; font-weight: 800; margin-bottom: 10px; }
+        .btn-exit { width: 100%; padding: 16px; background: #334155; border: none; border-radius: 15px; color: white; font-weight: 600; margin-top: 15px; }
+    </style>
+</head>
+<body>
+
+    <div id="page-login" class="page active">
+        <div class="login-card">
+            <h2 style="margin-top:0">Stock Flow</h2>
+            <input type="text" placeholder="Username" value="admin">
+            <input type="password" placeholder="Password" value="1234">
+            <button class="btn-go" onclick="navigate('page-menu')">LOGIN</button>
+        </div>
+    </div>
+
+    <div id="page-menu" class="page">
+        <button class="btn-split btn-in" onclick="openScanner('IN')">
+            <h1>IN</h1>
+            <p>STOCK ENTRY</p>
+        </button>
+        <button class="btn-split btn-out" onclick="openScanner('OUT')">
+            <h1>OUT</h1>
+            <p>STOCK EXIT</p>
+        </button>
+    </div>
+
+    <div id="page-scanner" class="page">
+        <div id="reader"></div>
+        <div class="overlay">
+            <div id="badge" class="status-pill">MODE</div>
+            <div id="last-ean" style="font-size: 1.2rem; margin-bottom: 10px;">Align Barcode</div>
+            <button class="btn-exit" onclick="stopScanner()">BACK TO MENU</button>
+        </div>
+    </div>
+
+<script>
+    let inventory = JSON.parse(localStorage.getItem('ultra_stock')) || {};
+    let html5QrCode = null;
+    let mode = '';
+
+    function navigate(id) {
+        document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+        document.getElementById(id).classList.add('active');
+    }
+
+    async function openScanner(m) {
+        mode = m;
+        const b = document.getElementById('badge');
+        b.innerText = `STOCK ${m}`;
+        b.style.backgroundColor = (m === 'IN') ? 'var(--in-emerald)' : 'var(--out-indigo)';
+        
+        navigate('page-scanner');
+
+        // PERFORMANCE TUNING: Use Html5Qrcode directly for lower latency
+        html5QrCode = new Html5Qrcode("reader");
+        
+        const config = { 
+            fps: 60, // Maximum frame rate for instant detection
+            qrbox: { width: 300, height: 120 }, // Optimized thin box for EAN lines
+            aspectRatio: 1.0,
+            formatsToSupport: [ 
+                Html5QrcodeSupportedFormats.EAN_13, 
+                Html5QrcodeSupportedFormats.EAN_8,
+                Html5QrcodeSupportedFormats.CODE_128 
+            ]
+        };
+
+        try {
+            // facingMode environment ensures the high-res back camera is used
+            await html5QrCode.start({ facingMode: "environment" }, config, onResult);
+        } catch (err) {
+            alert("Camera Error: " + err);
+            navigate('page-menu');
+        }
+    }
+
+    async function stopScanner() {
+        if (html5QrCode) { await html5QrCode.stop(); html5QrCode = null; }
+        navigate('page-menu');
+    }
+
+    function onResult(text) {
+        // Immediate Feedback
+        if (navigator.vibrate) navigator.vibrate(50);
+        html5QrCode.pause(true); // Pause video processing immediately
+        
+        document.getElementById('last-ean').innerText = "Scanned: " + text;
+
+        // Use requestAnimationFrame for smooth prompt appearance
+        requestAnimationFrame(() => {
+            setTimeout(() => {
+                let qty = prompt(`[STOCK ${mode}]\nEAN: ${text}\nQuantity:`, "1");
+                qty = parseInt(qty);
+
+                if (!isNaN(qty) && qty > 0) {
+                    if (!inventory[text]) {
+                        if (mode === 'IN') {
+                            let n = prompt("New Item! Enter Name:");
+                            inventory[text] = { name: n || "Item", qty: qty };
+                        } else {
+                            alert("Item not found in database.");
+                        }
+                    } else {
+                        if (mode === 'IN') inventory[text].qty += qty;
+                        else inventory[text].qty = Math.max(0, inventory[text].qty - qty);
+                    }
+                    localStorage.setItem('ultra_stock', JSON.stringify(inventory));
+                }
+                
+                document.getElementById('last-ean').innerText = "Align Barcode";
+                html5QrCode.resume();
+            }, 50);
+        });
+    }
+</script>
+</body>
+</html>
